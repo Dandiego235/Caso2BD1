@@ -258,60 +258,52 @@ INSERT INTO ingredientesPorCarrito (carritoId, ingredienteId, cantidad, enabled,
 INNER JOIN ingredientesporproductos ON copoProductos.productoId = ingredientesporproductos.productoId 
 INNER JOIN ingredientes ON ingredientesporproductos.ingredienteId = ingredientes.ingredienteId;*/
 
-DROP TABLE IF EXISTS ingredientesRefill;
-CREATE TEMPORARY TABLE ingredientesRefill(
+DROP TABLE IF EXISTS ingredientesEvento;
+CREATE TEMPORARY TABLE ingredientesEvento(
   guid VARCHAR(36),
   ingredienteId INT,
-  quantity DECIMAL(8,2)
+  quantity DECIMAL(10,2)
 );
 
-SET @guidRef = UUID();
-INSERT INTO ingredientesRefill (guid, ingredienteId, quantity) VALUES
-(@guidRef, 1, 50),
-(@guidRef, 2, 50),
-(@guidRef, 3, 50),
-(@guidRef, 4, 50),
-(@guidRef, 5, 50),
-(@guidRef, 6, 50),
-(@guidRef, 7, 50),
-(@guidRef, 8, 50),
-(@guidRef, 9, 50),
-(@guidRef, 10, 50),
-(@guidRef, 11, 50),
-(@guidRef, 12, 50),
-(@guidRef, 13, 50),
-(@guidRef, 14, 1000),
-(@guidRef, 15, 1000),
-(@guidRef, 16, 1000),
-(@guidRef, 17, 500),
-(@guidRef, 18, 50),
-(@guidRef, 19, 50),
-(@guidRef, 20, 300),
-(@guidRef, 21, 1000);
-
-DROP PROCEDURE IF EXISTS registrarRefill;
+DROP PROCEDURE IF EXISTS registrarEventoTurno;
 DELIMITER $$
-CREATE PROCEDURE registrarRefill(IN pTurnoId INT, IN pFecha DATE, IN pComputer VARCHAR(20), IN pUsername VARCHAR(20), IN pGuid VARCHAR(36))
+CREATE PROCEDURE registrarEventoTurno(IN pTipoEvento TINYINT, IN pCheckStatus TINYINT, IN pTurnoId INT, IN pFecha DATETIME, IN pComputer VARCHAR(20), IN pUsername VARCHAR(20), IN pGuid VARCHAR(36))
 BEGIN
   DECLARE pEventId INT;
+  DECLARE pRandom TINYINT;
+  
+  /*
+  SET pRandom = 1;
+  IF pTipoEvento <= 3 THEN 
+    SET pRandom = FLOOR(1 + (RAND() * porcentajeRobo));
+    IF pRandom = 1 THEN 
+      IF pTipoEvento <> 1 THEN
+        pCheckStatus = 2;
+      ENDIF;
+    ENDIF;
+  ENDIF;
+  */
 
 -- insertar en eventos carritos
 	INSERT INTO eventosCarritos (turnoId, fecha, tipoEventoCarId, checkStatusId, enabled, createdAt, computer, username, eventosCarritos.checksum) VALUES 
-  (pTurnoId, pFecha, 3, 1, 1, pFecha,pComputer, pUsername,  SHA2(CONCAT('Wakanda Forever','Copero system',pComputer,pTurnoId, pFecha, pUsername), 256));
+  (pTurnoId, pFecha, pTipoEvento, pCheckStatus, 1, pFecha,pComputer, pUsername,  SHA2(CONCAT('Wakanda Forever','Copero system',pComputer,pTurnoId, pFecha, pUsername), 256));
 
-    -- insertar en bitácora ingredientes
-  SELECT eventId FROM eventosCarritos ORDER BY eventId DESC LIMIT 1 INTO pEventId; 
+  -- insertar en bitácora ingredientes
+  SET pEventId = LAST_INSERT_ID(); 
   INSERT INTO bitacoraIngredientes (eventId, ingredienteId, cantidad, fecha, createdAt, computer, username, bitacoraIngredientes.checksum)
-  SELECT pEventId, ingredientesRefill.ingredienteId, ingredientesRefill.quantity, pFecha, pFecha, pComputer,pUsername, SHA2('A wild gengar appeared',256)
-  FROM ingredientesRefill
-  WHERE ingredientesRefill.guid = pGuid;
+  SELECT pEventId, ingredientesEvento.ingredienteId, ingredientesEvento.quantity, pFecha, pFecha, pComputer,pUsername, SHA2('A wild gengar appeared',256)
+  FROM ingredientesEvento
+  WHERE ingredientesEvento.guid = pGuid;
   
-  -- update ingredientes por carrito
-  UPDATE ingredientesPorCarrito,
-  (SELECT bitacoraingredientes.ingredienteId, bitacoraingredientes.eventId, SUM(bitacoraingredientes.cantidad) AS cantidad
-  FROM bitacoraingredientes WHERE eventId = pEventId Group BY ingredienteId, eventId) AS matches
-  SET ingredientesPorCarrito.cantidad = ingredientesporcarrito.cantidad + matches.cantidad
-  WHERE ingredientesPorCarrito.ingredienteId = matches.ingredienteId AND matches.ingredienteId > 0;
+  -- update ingredients por carrito
+  UPDATE ingredientesPorCarrito
+  INNER JOIN (SELECT bi.eventId, bi.ingredienteId, SUM(cantidad) AS total FROM bitacoraIngredientes AS bi GROUP BY eventId, ingredienteId) AS matches
+  ON matches.ingredienteId = ingredientesPorCarrito.ingredienteId
+  INNER JOIN eventosCarritos ON matches.eventId = eventosCarritos.eventId
+  INNER JOIN turnos ON eventosCarritos.turnoId = turnos.turnoId
+  SET ingredientesPorCarrito.cantidad = ingredientesPorCarrito.cantidad + matches.total
+  WHERE matches.eventId = pEventId AND matches.ingredienteId = ingredientesPorCarrito.ingredienteId
+  AND ingredientesPorCarrito.carritoId = turnos.carritoId;
   
 END$$
 DELIMITER ;
@@ -336,7 +328,7 @@ INSERT INTO productosVenta(guid, productId, quantity) VALUES
 
 DROP PROCEDURE IF EXISTS registrarVenta;
 DELIMITER $$
-CREATE PROCEDURE registrarVenta(IN pTurnoId INT, IN pTipoPago TINYINT, IN pPostDate DATETIME, IN pSolicitudId INT, IN pComputer VARCHAR(20), IN pUsername VARCHAR(20), IN pGuid VARCHAR(36))
+CREATE PROCEDURE registrarVenta(IN pTurnoId INT, IN pTipoPago TINYINT, IN pPostDate DATETIME, IN pComputer VARCHAR(20), IN pUsername VARCHAR(20), IN pGuid VARCHAR(36))
 BEGIN
   DECLARE pComisionId INT;
   DECLARE pVentaId INT;
@@ -348,7 +340,7 @@ BEGIN
   OR (pPostDate BETWEEN comisiones.fechaInicio AND comisiones.fechaFin)); 
      
   INSERT INTO copoVentas (turnoId, postDate, tipoPago, monto, solicitudId, enabled, pagadoCopero, comisionId, createdAt, computer, username, copoVentas.checksum) VALUES
-  (pTurnoId, pPostDate, pTipoPago, 0, pSolicitudId, 1, 0, pComisionId, pPostDate, pComputer, pUsername, SHA2(CONCAT(turnoId,'Wakanda Forever','Copero system',pComputer,pUsername, comisionId), 256));
+  (pTurnoId, pPostDate, pTipoPago, 0, NULL, 1, 0, pComisionId, pPostDate, pComputer, pUsername, SHA2(CONCAT(turnoId,'Wakanda Forever','Copero system',pComputer,pUsername, comisionId), 256));
 
   SET pVentaId = LAST_INSERT_ID(); 
   INSERT INTO productosPorVenta (ventaId, productoId, cantidad, enabled, createdAt, computer, username, productosPorVenta.checksum)
@@ -589,8 +581,7 @@ CREATE TABLE horarios(
   guid VARCHAR (36),
   horarioId INT PRIMARY KEY AUTO_INCREMENT,
   horaInicio TIME NOT NULL,
-  horaFinal TIME NOT NULL,
-  horaRefill TIME DEFAULT NULL
+  horaFinal TIME NOT NULL
 );
 
 -- SELECT @newGUID;
@@ -598,9 +589,9 @@ CREATE TABLE horarios(
 -- tabla agrupadora de horarios de turnos por día, los cuales componen el dataset.
 -- se asume que tienen que estar en orden.
 SET @newTimeGUID = UUID();
-INSERT INTO horarios(guid, horaInicio, horaFinal, horaRefill) VALUES
-(@newTimeGUID, '07:00:00', '12:00:00', NULL),
-(@newTimeGUID, '13:00:00', '20:00:00', '15:00:00');
+INSERT INTO horarios(guid, horaInicio, horaFinal) VALUES
+(@newTimeGUID, '07:00:00', '12:00:00'),
+(@newTimeGUID, '13:00:00', '20:00:00');
 
 -- tabla para generar combinaciones de carrito - playa, las cuales son fijas,
 -- luego, se le asigna un copero aleatorio, el cual va a ir cambiando por el turno.
@@ -630,44 +621,164 @@ UPDATE combinations INNER JOIN randomCoperos ON combinations.combinationId = ran
 SET combinations.coperoId = randomCoperos.coperoId
 WHERE combinationId > 0;
 
-CREATE VIEW turnosCombinations AS SELECT * FROM horarios, combinations;
+DROP TABLE IF EXISTS turnosCombinations;
+CREATE TEMPORARY TABLE turnosCombinations(
+  horarioId INT,
+  horaInicio TIME NOT NULL,
+  horaFinal TIME NOT NULL,
+	combinationId INT,
+	carritoId  INT,
+    playaId INT,
+    coperoId INT
+);
 
--- SELECT * FROM turnosCombinations;
+INSERT INTO turnosCombinations(horarioId, horaInicio, horaFinal, combinationId, carritoId, playaId, coperoId)
+SELECT h.horarioId, h.horaInicio, h.horaFinal,  c.combinationId,
+c.carritoId, c.playaId, c.coperoId FROM horarios h, combinations c;
+
+-- SELECT * FROM turnosCombinations tc ORDER BY tc.combinationId, tc.horarioId;
 
 DROP PROCEDURE IF EXISTS llenarBase;
 DELIMITER $$
 CREATE PROCEDURE llenarBase(IN pDias TINYINT, IN pFechaInicio DATETIME, IN pCantTurnos INT, IN pCarritosCant INT, IN pProductosCant INT, 
 IN pVariedadVentas INT, IN pCantProdVentas INT, IN pVentasMin INT, IN pVentasMax INT,
-IN pVentasMinEnd INT, IN pVentasMaxEnd INT, IN pCreatedAt DATETIME, IN pComputer VARCHAR(20), IN pUsername VARCHAR(20))
+IN pVentasMinEnd INT, IN pVentasMaxEnd INT, IN pCreatedAt DATETIME, IN pComputer VARCHAR(20), IN pUsername VARCHAR(20), IN pLadron INT, 
+IN pRoboIngrediente INT, IN pPorcentajeRobo DECIMAL(4,2))
 BEGIN
 	DECLARE dias INT;
     DECLARE totalDias INT;
-    DECLARE fechaGen DATE;
+    DECLARE primerDia DATETIME;
     DECLARE pHoraInicio TIME;
     DECLARE pHoraFinal TIME;
-    DECLARE pHoraRefill TIME;
-    DECLARE dateInicio DATETIME;
-    DECLARE dateFinal DATETIME;
-    DECLARE horaGen TIME;
     DECLARE turnoLength INT;
-    DECLARE indice INT;
-    DECLARE turnoNum INT;
     DECLARE rangeMin INT;
     DECLARE rangeMax INT;
     DECLARE ventasCant INT;
     DECLARE ventasNum INT;
-    DECLARE pCopero INT;
-    DECLARE pCarrito INT;
-    Declare pPlaya INT;
-    DECLARE pTurnoId INT;
-    DECLARE pTurnoAnterior INT;
-    DECLARE variedadProductos INT;
-    DECLARE cantProductos INT;
     DECLARE ventaGUID VARCHAR(36);
+    DECLARE cierreGUID VARCHAR(36);
+    DECLARE cierreStatus TINYINT;
+    
+    SET pHoraInicio = (SELECT horaInicio from horarios WHERE horarioId = 1);
+    SET pHoraFinal = (SELECT horaFinal FROM horarios ORDER BY horarioId DESC LIMIT 1);
+    SET primerDia = addTime(pFechaInicio, pHoraInicio);
     
     SET dias = 0;
     SET totalDias = pDias;
     diasLoop: LOOP
+		IF dias >= totalDias THEN
+			LEAVE diasLoop;
+		END IF;
+        INSERT INTO turnos (coperoId, carritoId, playaId, turnoInicio, turnoFin, enabled, createdAt, computer, username, checksum)
+        SELECT tc.coperoId, tc.CarritoId, tc.playaId, addTime(adddate(pFechaInicio, INTERVAL dias Day), tc.horaInicio),
+        addTime(adddate(pFechaInicio, INTERVAL dias Day), tc.horaFinal), 
+        1, pCreatedAt, pComputer, pUsername,
+        SHA2(CONCAT(coperoId, carritoId, playaId, horaInicio, horaFinal, 1, pCreatedAt, pComputer, pUsername), 256)
+        FROM turnosCombinations AS tc ORDER BY tc.carritoId, tc.horarioId;
+        SET dias = dias + 1;
+    END LOOP;
+
+    UPDATE turnos
+    SET turnoAnterior = CASE
+		WHEN turnoInicio = primerDia THEN NULL
+        WHEN TIME(turnoInicio) = pHoraInicio AND turnoInicio <> primerDia THEN turnoId - pCantTurnos * pCarritosCant - 1
+        ELSE turnoId - 1
+	END
+    WHERE turnoId >= 1;
+    
+    turnosGen: BEGIN
+		  DECLARE pTurnoid INT;
+          DECLARE dateInicio DATETIME;
+          DECLARE dateFinal DATETIME;
+		  DECLARE done INT DEFAULT FALSE;
+		  DECLARE cur CURSOR FOR SELECT turnoId, turnoInicio, turnoFin FROM turnos;
+		  DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+          
+          OPEN cur;
+          
+          readLoop: LOOP
+			FETCH cur INTO pTurnoId, dateInicio, dateFinal;
+			IF done THEN
+				LEAVE readLoop;
+			END IF;
+
+                -- establezco la longitud del turno
+                SET turnoLength = TIME_TO_SEC(TIMEDIFF(dateFinal, dateInicio));
+                
+                -- reviso si es un fin de semana para generar un intervalo de ventas más corto.
+                -- las ventas se van a ir generando de acuerdo con un intervalo random de tiempo tal que quede un rango de ventas durante el turno.
+                IF WEEKDAY(dateInicio) = 5 OR WEEKDAY(dateInicio) = 6 THEN
+					SET rangeMax = pVentasMaxEnd;
+					SET rangeMin = pVentasMinEnd;
+				ELSE
+					SET rangeMax = pVentasMax;
+					SET rangeMin = pVentasMin;
+				END IF;
+                
+                -- generación de ventas.
+                SET ventasCant = FLOOR(rangeMin + RAND() * (rangeMax - rangeMin));
+                SET ventasNum = 1;
+
+                ventasGen: LOOP
+					IF ventasNum > ventasCant THEN
+						LEAVE ventasGen;
+                    END IF;
+                    SET ventaGUID = UUID(); -- agrupador de ventas.
+                    
+                    -- se va a generar una cantidad random de productos distintos.
+                    INSERT INTO productosVenta(guid, productId, quantity)
+					SELECT * FROM 
+					(SELECT ventaGuid, copoProductos.productoId, FLOOR(0 + RAND() * pCantProdVentas) as cantidad
+					FROM copoProductos ORDER BY RAND() LIMIT 5) as randomGen
+                    WHERE randomGen.cantidad != 0;
+                    
+                    CALL registrarVenta (pTurnoId, 1, DATE_ADD(dateInicio, INTERVAL FLOOR(RAND() * turnoLength) SECOND), pComputer, pUsername, ventaGUID);
+                    
+                    SET ventasNum = ventasNum + 1;
+                END LOOP;
+                
+                -- se inserta la cantidad de ingredientes que se gastó durante el turno para que no queden cantidades negativas.
+                INSERT INTO ingredientesEvento (guid, ingredienteId, quantity)
+                SELECT ventaGuid, ingredientesPorCarrito.ingredienteId, CEILING(-1.05 * ingredientesPorCarrito.cantidad)
+                FROM ingredientesPorCarrito
+                INNER JOIN carritos ON ingredientesPorCarrito.carritoId = carritos.carritoId
+                INNER JOIN turnos ON carritos.carritoId = turnos.carritoId
+                WHERE turnos.turnoId = pTurnoId AND ingredientesPorCarrito.cantidad < 0;
+                
+				-- registramos la apertura o el cambio de turno. Si el turno es el primero, es una apertura (tipoEvento = 1).
+                -- si no, es un cambio de turno (tipoEvento = 3).
+                CALL registrarEventoTurno(CASE WHEN TIME(dateInicio) = pHoraInicio THEN 1 ELSE 3 END, 1, 
+                pTurnoId, dateInicio, pComputer, pUsername, ventaGUID);
+                
+                -- si estamos en el ultimo turno del dia
+                IF TIME(dateFinal) = pHoraFinal THEN
+					SET cierreGUID = UUID();
+					IF (SELECT coperoId from turnos where turnoId = pTurnoId) = pLadron THEN
+						INSERT INTO ingredientesEvento (guid, ingredienteId, quantity)
+						SELECT cierreGUID, ingredientesPorCarrito.ingredienteId,
+                        CASE WHEN ingredientesPorCarrito.ingredienteId = pRoboIngrediente THEN -ceiling(pPorcentajeRobo * ingredientesPorCarrito.cantidad)
+                        ELSE 0 END
+						FROM ingredientesPorCarrito
+						INNER JOIN carritos ON ingredientesPorCarrito.carritoId = carritos.carritoId
+						INNER JOIN turnos ON carritos.carritoId = turnos.carritoId
+						WHERE turnos.turnoId = pTurnoId;
+                        SET cierreStatus = 2;
+					ELSE
+						INSERT INTO ingredientesEvento (guid, ingredienteId, quantity)
+						SELECT cierreGUID, ingredientesPorCarrito.ingredienteId, 0
+						FROM ingredientesPorCarrito
+						INNER JOIN carritos ON ingredientesPorCarrito.carritoId = carritos.carritoId
+						INNER JOIN turnos ON carritos.carritoId = turnos.carritoId
+						WHERE turnos.turnoId = pTurnoId;
+                        SET cierreStatus = 1;
+                    END IF;
+					CALL registrarEventoTurno(2, cierreStatus, pTurnoId, dateFinal, pComputer, pUsername, cierreGuid);
+                END IF;
+          END LOOP;
+    END turnosGen;
+    
+    
+    /*
 		IF dias >= totalDias THEN
 			LEAVE diasLoop;
 		END IF;
@@ -745,12 +856,16 @@ BEGIN
         SET dias = dias + 1;
         
     END LOOP;
-    
+    */
 END$$
 DELIMITER ;
 
-CALL llenarBase(30, '2022-01-01 00:00:00', 2, 15, 13, 3, 3, 4, 20, 15, 20, NOW(), 'computer1', 'user1');
+CALL llenarBase(30, '2022-01-01 00:00:00', 2, 15, 13, 3, 3, 4, 20, 15, 20, NOW(), 'computer1', 'user1', 1, 15, 0.1);
 
+SELECT * FROM turnos;
+    
+SELECT * FROM ingredientesPorCarrito;
+                
 SELECT * FROM productosPorVenta ORDER BY ventaId;
 SELECT * FROM bitacoraingredientes;
 SELECT * FROM turnos;
@@ -758,6 +873,16 @@ SELECT * from ingredientesPorCarrito;
 SELECT * FROM copoventas ORDER BY turnoId, postDate;
 SELECT turnoId, count(turnoId) FROM copoventas GROUP BY turnoId;
 SELECT * FROM cajaCarritos;
+SELECT eventosCarritos.eventId, eventosCarritos.tipoEventoCarId, eventosCarritos.checkStatusId, bitacoraIngredientes.ingredienteId,
+bitacoraIngredientes.cantidad, ingredientesPorCarrito.carritoId, ingredientesPorCarrito.cantidad
+ FROM eventosCarritos INNER JOIN bitacoraIngredientes ON bitacoraIngredientes.eventId = eventosCarritos.eventId
+INNER JOIN turnos ON turnos.turnoId = eventosCarritos.turnoId
+INNER JOIN ingredientesPorCarrito ON bitacoraIngredientes.ingredienteId = ingredientesPorCarrito.ingredienteId
+WHERE turnos.coperoId = 1 AND eventosCarritos.tipoEventoCarId = 2 AND bitacoraIngredientes.ingredienteId = 9;
+
+SELECT * FROM bitacoraIngredientes bi INNER JOIN eventosCarritos ec ON bi.eventId = ec.eventId 
+INNER JOIN turnos ON ec.turnoId = turnos.turnoId WHERE bi.ingredienteId = 9 AND turnos.coperoId = 1;
+
 
 /*SELECT * FROM productosPorVenta WHERE ventaId = 113;
 
@@ -783,3 +908,4 @@ SELECT * FROM productosPorVenta WHERE ventaId = 2631;
   INNER JOIN copoProductos ON productosPorVenta.productoId = copoProductos.productoId
   INNER JOIN ingredientesPorProductos On copoProductos.productoId = ingredientesporproductos.productoId
   WHERE productosPorVenta.ventaId = 2631;*/
+  
