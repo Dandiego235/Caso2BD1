@@ -243,7 +243,8 @@ BEGIN
                     SET variedadProductos = 0;
                     SET ventaGUID = UUID(); -- agrupador de ventas.
                     
-                    -- PROFE, nombres mae que paso con el curso de algoritmos jajaja, tenes muchos bucles anidados , traten de aplanar esto, que el dataset programe los random e insertan nada mas
+                    -- PROFE, nombres mae que paso con el curso de algoritmos jajaja, tenes muchos bucles anidados ,
+                    -- traten de aplanar esto, que el dataset programe los random e insertan nada mas
                     -- se va a generar una cantidad random de productos distintos. el máximo lo dicta pVariedadVentas
                     WHILE variedadProductos < FLOOR( 1 + RAND() * pVariedadVentas) Do
                         -- falta validación de si hay suficientes ingredientes.
